@@ -8,7 +8,12 @@ import android.util.Log;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.inputmethod.InputMethodManager;
+import android.window.OnBackInvokedCallback;
+import android.window.OnBackInvokedDispatcher;
+
 import androidx.appcompat.app.ActionBar;
+import androidx.fragment.app.Fragment;
+import androidx.fragment.app.FragmentManager;
 import androidx.preference.PreferenceFragmentCompat;
 import com.bytehamster.lib.preferencesearch.SearchPreferenceResult;
 import com.bytehamster.lib.preferencesearch.SearchPreferenceResultListener;
@@ -34,6 +39,9 @@ public class PreferenceActivity extends ToolbarActivity implements SearchPrefere
     public static final String OPEN_AUTO_DOWNLOAD_SETTINGS = "OpenAutoDownloadSettings";
     private SettingsActivityBinding binding;
 
+    private OnBackInvokedCallback backInvokedCallback;
+
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -51,9 +59,49 @@ public class PreferenceActivity extends ToolbarActivity implements SearchPrefere
                     .replace(binding.settingsContainer.getId(), new MainPreferencesFragment(), FRAGMENT_TAG)
                     .commit();
         }
+
+        setupModernBackNavigation();
+
         Intent intent = getIntent();
         if (intent.getBooleanExtra(OPEN_AUTO_DOWNLOAD_SETTINGS, false)) {
             openScreen(R.xml.preferences_autodownload);
+        }
+    }
+
+    private void setupModernBackNavigation() {
+        if (Build.VERSION.SDK_INT >= 34) {
+            // Use OnBackInvokedCallback for Android 14+
+            backInvokedCallback = new OnBackInvokedCallback() {
+                @Override
+                public void onBackInvoked() {
+                    handleSystemBackNavigation();
+                }
+            };
+
+            // Register with PRIORITY_SYSTEM_NAVIGATION_OBSERVER
+            getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
+                    OnBackInvokedDispatcher.PRIORITY_OVERLAY,
+                    backInvokedCallback
+            );
+        }
+    }
+
+    private void handleSystemBackNavigation() {
+        FragmentManager fragmentManager = getSupportFragmentManager();
+
+        if (fragmentManager.getBackStackEntryCount() > 0) {
+            Fragment currentFragment = fragmentManager.findFragmentById(binding.settingsContainer.getId());
+
+            if (currentFragment instanceof MainPreferencesFragment) {
+                // We're at the main screen, finish activity
+                finish();
+            } else {
+                // Pop back stack normally
+                fragmentManager.popBackStack();
+            }
+        } else {
+            // No back stack, finish activity
+            finish();
         }
     }
 
@@ -127,21 +175,33 @@ public class PreferenceActivity extends ToolbarActivity implements SearchPrefere
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
         if (item.getItemId() == android.R.id.home) {
-            if (getSupportFragmentManager().getBackStackEntryCount() == 0) {
+            handleToolbarBackNavigation();
+            return true;
+        }
+        return false;
+    }
+
+    private void handleToolbarBackNavigation() {
+        FragmentManager fragmentManager = getSupportFragmentManager();
+
+        if (fragmentManager.getBackStackEntryCount() > 0) {
+            Fragment currentFragment = fragmentManager.findFragmentById(binding.settingsContainer.getId());
+
+            if (currentFragment instanceof MainPreferencesFragment) {
                 finish();
             } else {
+                // Hide keyboard and pop back stack
                 InputMethodManager imm = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
                 View view = getCurrentFocus();
-                //If no view currently has focus, create a new one, just so we can grab a window token from it
                 if (view == null) {
                     view = new View(this);
                 }
                 imm.hideSoftInputFromWindow(view.getWindowToken(), 0);
-                getSupportFragmentManager().popBackStack();
+                fragmentManager.popBackStack();
             }
-            return true;
+        } else {
+            finish();
         }
-        return false;
     }
 
     @Override
@@ -171,6 +231,16 @@ public class PreferenceActivity extends ToolbarActivity implements SearchPrefere
     protected void onStop() {
         super.onStop();
         EventBus.getDefault().unregister(this);
+    }
+
+    @Override
+    protected void onDestroy() {
+        super.onDestroy();
+
+        // Clean up the callback
+        if (Build.VERSION.SDK_INT >= 34 && backInvokedCallback != null) {
+            getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(backInvokedCallback);
+        }
     }
 
     @Subscribe(threadMode = ThreadMode.MAIN)
